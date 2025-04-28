@@ -1,7 +1,3 @@
-project('pcat-manager', 'c',
-    version : '1.0.0',
-    default_options : ['warning_level=3'])
-
 glib2_deps = dependency('glib-2.0')
 gthread2_deps = dependency('gthread-2.0')
 gio2_deps = dependency('gio-2.0')
