@@ -1181,5 +1181,5 @@ guint pcat_modem_manager_device_power_usage_get()
 }
 
     gpiod_chip_close(mm_data->gpio_chip);
-    return FALSE;
+
 }
