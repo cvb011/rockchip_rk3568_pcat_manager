@@ -147,34 +147,25 @@ static PCatModemManagerData g_pcat_modem_manager_data = {0};
 static inline gboolean pcat_modem_manager_modem_power_init(PCatModemManagerData *mm_data)
 {
     guint i;
+    int ret;
 
     g_message("Start Modem power initialization.");
 
     mm_data->modem_rfkill_state = FALSE;
 
-    if(mm_data->gpio_chip == NULL)
-    {
+    if (mm_data->gpio_chip == NULL) {
         mm_data->gpio_chip = gpiod_chip_open("gpiochip0");
-        if(mm_data->gpio_chip == NULL)
-        {
+        if (mm_data->gpio_chip == NULL) {
             g_warning("Failed to open Modem power GPIO chip!");
             return FALSE;
         }
     }
 
-    struct gpiod_line_config *config = gpiod_line_config_new();
-    if (!config) {
-        g_warning("Failed to create GPIO line config");
-        gpiod_chip_close(mm_data->gpio_chip);
-        return FALSE;
-    }
-
-    /* 新版本需要为每个线路单独创建 line_settings */
+    /* 创建公共 line_settings */
     struct gpiod_line_settings *settings = gpiod_line_settings_new();
     if (!settings) {
         g_warning("Failed to create GPIO line settings");
-        gpiod_chip_close(mm_data->gpio_chip);
-        return FALSE;
+        goto error_close_chip;
     }
 
     gpiod_line_settings_set_direction(settings, GPIOD_LINE_DIRECTION_OUTPUT);
@@ -182,52 +173,72 @@ static inline gboolean pcat_modem_manager_modem_power_init(PCatModemManagerData 
 
     /* 创建请求配置 */
     struct gpiod_request_config *req_cfg = gpiod_request_config_new();
+    if (!req_cfg) {
+        g_warning("Failed to create request config");
+        goto error_free_settings;
+    }
     gpiod_request_config_set_consumer(req_cfg, "modem-manager");
 
-    /* 请求线路的新方式 */
-    struct gpiod_line_request *request = NULL;
-  
-    /* Power Line */
-    request = gpiod_chip_request_lines(mm_data->gpio_chip, req_cfg,
-                                      &(struct gpiod_line_config){
-                                          .num_offsets = 1,
-                                          .offsets = (unsigned int[]){12},
-                                          .settings = settings
-                                      });
-    if (!request) {
-        g_warning("Failed to request power GPIO line: %s", strerror(errno));
-        goto error;
+    /* 创建并配置 line_config */
+    struct gpiod_line_config *line_cfg = gpiod_line_config_new();
+    if (!line_cfg) {
+        g_warning("Failed to create line config");
+        goto error_free_req_cfg;
     }
-    mm_data->gpio_modem_power_line = request;
 
-    /* Reset Line */
-    request = gpiod_chip_request_lines(mm_data->gpio_chip, req_cfg,
-                                      &(struct gpiod_line_config){
-                                          .num_offsets = 1,
-                                          .offsets = (unsigned int[]){13},
-                                          .settings = settings
-                                      });
-    if (!request) {
-        g_warning("Failed to request reset GPIO line: %s", strerror(errno));
-        goto error;
+    /* 配置 power 线路 */
+    unsigned int power_offset = 12;
+    ret = gpiod_line_config_add_line_settings(line_cfg, &power_offset, 1, settings);
+    if (ret) {
+        g_warning("Failed to add power line settings");
+        goto error_free_line_cfg;
     }
-    mm_data->gpio_modem_reset_line = request;
 
-    /* RF Kill Line */
-    request = gpiod_chip_request_lines(mm_data->gpio_chip, req_cfg,
-                                      &(struct gpiod_line_config){
-                                          .num_offsets = 1,
-                                          .offsets = (unsigned int[]){14},
-                                          .settings = settings
-                                      });
-    if (!request) {
-        g_warning("Failed to request RF kill GPIO line: %s", strerror(errno));
-        goto error;
+    /* 请求 power 线路 */
+    mm_data->gpio_modem_power_line = gpiod_chip_request_lines(mm_data->gpio_chip, req_cfg, line_cfg);
+    if (!mm_data->gpio_modem_power_line) {
+        g_warning("Failed to request power GPIO line");
+        goto error_free_line_cfg;
     }
-    mm_data->gpio_modem_rf_kill_line = request;
 
+    /* 复用配置请求其他线路 */
+    gpiod_line_config_reset(line_cfg);
+    
+    /* 配置 reset 线路 */
+    unsigned int reset_offset = 13;
+    ret = gpiod_line_config_add_line_settings(line_cfg, &reset_offset, 1, settings);
+    if (ret) {
+        g_warning("Failed to add reset line settings");
+        goto error_release_power;
+    }
+
+    mm_data->gpio_modem_reset_line = gpiod_chip_request_lines(mm_data->gpio_chip, req_cfg, line_cfg);
+    if (!mm_data->gpio_modem_reset_line) {
+        g_warning("Failed to request reset GPIO line");
+        goto error_release_power;
+    }
+
+    /* 配置 rfkill 线路 */
+    gpiod_line_config_reset(line_cfg);
+    unsigned int rf_kill_offset = 14;
+    ret = gpiod_line_config_add_line_settings(line_cfg, &rf_kill_offset, 1, settings);
+    if (ret) {
+        g_warning("Failed to add RF kill line settings");
+        goto error_release_reset;
+    }
+
+    mm_data->gpio_modem_rf_kill_line = gpiod_chip_request_lines(mm_data->gpio_chip, req_cfg, line_cfg);
+    if (!mm_data->gpio_modem_rf_kill_line) {
+        g_warning("Failed to request RF kill GPIO line");
+        goto error_release_reset;
+    }
+
+    /* 释放配置对象 */
+    gpiod_line_config_free(line_cfg);
+    gpiod_request_config_free(req_cfg);
     gpiod_line_settings_free(settings);
-    gpiod_line_config_free(config);
+
+    /* 后续时序控制代码保持不变... */
 
     for(i=0;i<PCAT_MODEM_MANAGER_POWER_WAIT_TIME && mm_data->work_flag;i++)
     {
