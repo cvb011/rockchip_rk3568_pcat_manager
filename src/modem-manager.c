@@ -1179,7 +1179,3 @@ guint pcat_modem_manager_device_power_usage_get()
 {
     return g_pcat_modem_manager_data.modem_power_usage;
 }
-
-    gpiod_chip_close(mm_data->gpio_chip);
-
-}
