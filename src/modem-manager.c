@@ -287,10 +287,23 @@ static inline gboolean pcat_modem_manager_modem_power_init(PCatModemManagerData 
     {
         return FALSE;
     }
-
+ 
     g_message("Modem power initialization completed.");
 
     return TRUE;
+error_release_reset:
+    if (mm_data->gpio_modem_reset_line) gpiod_line_request_release(mm_data->gpio_modem_reset_line);
+error_release_power:
+    if (mm_data->gpio_modem_power_line) gpiod_line_request_release(mm_data->gpio_modem_power_line);
+error_free_line_cfg:
+    gpiod_line_config_free(line_cfg);
+error_free_req_cfg:
+    gpiod_request_config_free(req_cfg);
+error_free_settings:
+    gpiod_line_settings_free(settings);
+error_close_chip:
+    gpiod_chip_close(mm_data->gpio_chip);
+    return FALSE;
 }
 
 static inline void pcat_modem_manager_external_control_exec_line_parser(
@@ -1167,17 +1180,6 @@ guint pcat_modem_manager_device_power_usage_get()
     return g_pcat_modem_manager_data.modem_power_usage;
 }
 
-error_release_reset:
-    if (mm_data->gpio_modem_reset_line) gpiod_line_request_release(mm_data->gpio_modem_reset_line);
-error_release_power:
-    if (mm_data->gpio_modem_power_line) gpiod_line_request_release(mm_data->gpio_modem_power_line);
-error_free_line_cfg:
-    gpiod_line_config_free(line_cfg);
-error_free_req_cfg:
-    gpiod_request_config_free(req_cfg);
-error_free_settings:
-    gpiod_line_settings_free(settings);
-error_close_chip:
     gpiod_chip_close(mm_data->gpio_chip);
     return FALSE;
 }
